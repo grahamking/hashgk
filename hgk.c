@@ -1,9 +1,9 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <math.h>
-#include <stdint.h>
 
 #include "lookup3.c"
 
@@ -189,7 +189,7 @@ int dict_collision_count(struct Dict *dict) {
 //////////////////////
 
 /* Split passwd line. Fills username and fullname. */
-const NAME_POS = 4;
+const int NAME_POS = 4;
 void split_line(char *line, char **out_username, char **out_fullname) {
     char *next_tok = strtok(line, ":,");
     char *username;
