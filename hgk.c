@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
+#include <assert.h>
 
 #include "lookup3.c"
 
@@ -95,7 +96,10 @@ char *node_get_value(struct Node *node, char *key) {
     int i;
     struct Item *item;
 
-    if (node->extra == NULL || strcmp(node->first->key, key) == 0) {
+    assert(node != NULL);
+    assert(key != NULL);
+
+    if (node->extra_len == 0 || strcmp(node->first->key, key) == 0) {
         return node->first->value;
     }
     else {
@@ -125,10 +129,13 @@ struct Dict {
     struct Node **store;
 };
 
-/* Find position in the map of key */
-int find_pos(struct Dict *dict, char *key) {
+/* Find position in the map of key.
+ * key: String to hash.
+ * size_bits: Number of bits of the hash we use.
+ */
+int find_pos(char *key, int size_bits) {
     uint32_t hash = get_hash(key);
-    int pos = (hash & hashmask(dict->size_bits));
+    int pos = (hash & hashmask(size_bits));
     return pos;
 }
 
@@ -142,37 +149,80 @@ struct Dict *dict_new(int initial_size) {
     return dict;
 }
 
-/* Delete the map */
-void dict_del(struct Dict *dict) {
-    free(dict->store);
-    free(dict);
-}
+/* Add 'item' to 'store' at 'pos', creating a node if necessary */
+void dict_add_to_pos(struct Node **store, int pos, struct Item *item) {
 
-/* Put 'value' in map at 'key' */
-void dict_set(struct Dict *dict, char *key, char *value) {
-    struct Item *item = item_new(key, value);
-    int pos = find_pos(dict, key);
-    struct Node *node = dict->store[pos];
+    struct Node *node = store[pos];
     if (node == NULL) {
         node = node_new(item);
-        dict->store[pos] = node;
+        store[pos] = node;
     }
     else {
         node_add(node, item);
     }
 }
 
+
+/* Grow the dictionary, re-hashing everything.
+ * Do this when we have too many collisions.
+ */
+void dict_grow(struct Dict *dict) {
+    int new_size = dict->size * 2;
+    int new_size_bits = bitcount(new_size);
+    struct Node **new_store = (struct Node **) malloc(sizeof(struct Node) * new_size);
+
+    struct Node *node;
+    int index;
+    int extra_index;
+    int new_pos;
+
+    for (index = 0; index < dict->size; index++) {
+        node = dict->store[index];
+        if (node == NULL || node->first == NULL) {
+            continue;
+        }
+
+        new_pos = find_pos(node->first->key, new_size_bits);
+        dict_add_to_pos(new_store, new_pos, node->first);
+
+        for (extra_index = 0; extra_index < node->extra_len; extra_index++) {
+            new_pos = find_pos(node->extra[extra_index]->key, new_size_bits);
+            dict_add_to_pos(new_store, new_pos, node->extra[extra_index]);
+        }
+        free(node);
+    }
+
+    free(dict->store);
+    dict->store = new_store;
+    dict->size = new_size;
+    dict->size_bits = new_size_bits;
+}
+
+/* Put 'value' in map at 'key' */
+void dict_set(struct Dict *dict, char *key, char *value) {
+    struct Item *item = item_new(key, value);
+    int pos = find_pos(key, dict->size_bits);
+    dict_add_to_pos(dict->store, pos, item);
+}
+
 /* Get value from the map */
 char *dict_get(struct Dict *dict, char *key) {
-    int pos = find_pos(dict, key);
+    int pos = find_pos(key, dict->size_bits);
     struct Node *node = dict->store[pos];
     return node_get_value(node, key);
 }
 
+/* Delete the map */
+void dict_del(struct Dict *dict) {
+    free(dict->store);
+    free(dict);
+}
+
+
 /* Number of collisions in current map */
 int dict_collision_count(struct Dict *dict) {
     int count = 0;
-    int i;
+    int i = 0;
 
     for (i = 0; i < dict->size; i++) {
         if (dict->store[i] == NULL) {
@@ -245,6 +295,25 @@ int main(int argc, char *argv[]) {
     FILE *passwd = fopen("/etc/passwd", "rt");
     fill_dict(passwd, dict);
 
+    printf("Size: %d, Key bits: %d, Collisions: %d\n",
+            dict->size,
+            dict->size_bits,
+            dict_collision_count(dict));
+
+    dict_grow(dict);
+
+    printf("Size: %d, Key bits: %d, Collisions: %d\n",
+            dict->size,
+            dict->size_bits,
+            dict_collision_count(dict));
+
+    dict_grow(dict);
+
+    printf("Size: %d, Key bits: %d, Collisions: %d\n",
+            dict->size,
+            dict->size_bits,
+            dict_collision_count(dict));
+
     printf("graham: %s\n", dict_get(dict, "graham"));
     printf("postgres: %s\n", dict_get(dict, "postgres"));
     printf("mysql: %s\n", dict_get(dict, "mysql"));
@@ -255,11 +324,6 @@ int main(int argc, char *argv[]) {
     printf("daemon: %s\n", dict_get(dict, "daemon"));
     printf("news: %s\n", dict_get(dict, "news"));
     printf("uucp: %s\n", dict_get(dict, "uucp"));
-
-    printf("Size: %d, Key bits: %d, Collisions: %d\n",
-            initial_size,
-            dict->size_bits,
-            dict_collision_count(dict));
 
     dict_del(dict);
     return 0;
